@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "82925868746",
+    "project_id": "ichkili-51ddf",
+    "storage_bucket": "ichkili-51ddf.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:82925868746:android:c2e1ac78599975e60e4633",
+        "android_client_info": {
+          "package_name": "com.example.ichkili"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyARANAzSSQwemXh6lj4Vj3HoibKWglvoU8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
