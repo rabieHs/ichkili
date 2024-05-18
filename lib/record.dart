@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/widgets.dart';
+import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:http/http.dart' as http;
@@ -21,8 +21,14 @@ class _RecordScreenState extends State<RecordScreen> {
   String _healthIssue = '';
   bool _isRecording = false;
   String _filePath = '';
-  AudioPlayer _audioPlayer = AudioPlayer();
-  AudioRecorder record = AudioRecorder();
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioRecorder _record = AudioRecorder();
+
+  @override
+  void dispose() {
+    _record.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -36,32 +42,60 @@ class _RecordScreenState extends State<RecordScreen> {
     });
   }
 
-  void _startRecording() async {
-    setState(() {
-      _isRecording = true;
-    });
+  Future<void> _startRecording() async {
+    try {
+      if (await _record.hasPermission()) {
+        Directory tempDir = await getTemporaryDirectory();
+        _filePath = '${tempDir.path}/recording.wav';
 
-    Directory tempDir = await getTemporaryDirectory();
-    _filePath = '${tempDir.path}/recording.wav';
-    setState(() {});
+        await _record.start(
+            path: _filePath,
+            RecordConfig(
+              encoder: AudioEncoder.wav,
+            ));
 
-    await record.start(RecordConfig(), path: _filePath);
+        setState(() {
+          _isRecording = true;
+        });
+      } else {
+        print('Recording permission not granted.');
+      }
+    } catch (e) {
+      print('Failed to start recording: $e');
+    }
   }
 
-  void _stopRecording() async {
-    setState(() {
-      _isRecording = false;
-    });
+  Future<void> _stopRecording() async {
+    try {
+      await _record.stop();
 
-    await record.stop();
+      setState(() {
+        _isRecording = false;
+      });
+    } catch (e) {
+      print('Failed to stop recording: $e');
+    }
   }
 
-  void _playRecording() async {
-    await _audioPlayer.play(DeviceFileSource(_filePath));
+  Future<void> _playRecording() async {
+    if (_filePath.isEmpty || !File(_filePath).existsSync()) {
+      print('File not found: $_filePath');
+      return;
+    }
+
+    try {
+      await _audioPlayer.play(DeviceFileSource(_filePath));
+    } catch (e) {
+      print('Failed to play recording: $e');
+    }
   }
 
-  void _pauseRecording() async {
-    await _audioPlayer.pause();
+  Future<void> _pauseRecording() async {
+    try {
+      await _audioPlayer.pause();
+    } catch (e) {
+      print('Failed to pause recording: $e');
+    }
   }
 
   void _removeRecording() {
@@ -71,31 +105,54 @@ class _RecordScreenState extends State<RecordScreen> {
   }
 
   Future<void> _analyzeVoice() async {
+    if (_filePath.isEmpty || !File(_filePath).existsSync()) {
+      setState(() {
+        _healthIssue = 'No recording found';
+      });
+      return;
+    }
+
     setState(() {
       _healthIssue = 'Analyzing...';
     });
 
-    var url = Uri.parse('http://your_flask_backend_url/analyze_voice');
-    var request = http.MultipartRequest('POST', url)
-      ..files.add(await http.MultipartFile.fromPath('voice', _filePath));
+    try {
+      // Stop recording before sending the request
+      await _stopRecording();
 
-    var response = await request.send();
+      var url = Uri.parse('http://192.168.1.27:4000/predict');
+      var request = http.MultipartRequest('POST', url);
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'audio',
+          _filePath,
+        ),
+      );
 
-    if (response.statusCode == 200) {
-      var responseBody = await response.stream.bytesToString();
-      var data = jsonDecode(responseBody);
+      var response = await request.send();
+      if (response.statusCode == 200) {
+        var responseBody = await response.stream.bytesToString();
+        var data = jsonDecode(responseBody);
+        setState(() {
+          _healthIssue = data['predicted_issue'];
+        });
+
+        await FirebaseFirestore.instance.collection('issues').add({
+          'issue_name': _healthIssue,
+          'timestamp': DateTime.now(),
+        });
+      } else {
+        var responseBody = await response.stream.bytesToString();
+        print(
+            'Failed to analyze voice: ${response.statusCode} - $responseBody');
+        setState(() {
+          _healthIssue = 'Failed to analyze voice';
+        });
+      }
+    } catch (e) {
+      print('Failed to analyze voice: $e');
       setState(() {
-        _healthIssue = data['health_issue'];
-      });
-
-      // Save the health issue to Firestore
-      await FirebaseFirestore.instance.collection('issues').add({
-        'issue_name': _healthIssue,
-        'timestamp': DateTime.now(),
-      });
-    } else {
-      setState(() {
-        _healthIssue = 'Failed to analyze voice';
+        _healthIssue = 'Failed to analyze voice: $e';
       });
     }
   }
@@ -107,37 +164,24 @@ class _RecordScreenState extends State<RecordScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           GestureDetector(
-            onPanDown: (detail) {
+            onTap: () {
               _startRecording();
             },
-            onLongPressUp: () {
-              _stopRecording();
-            },
-            onTap: () {
-              if (_filePath.isNotEmpty) {
-                _playRecording();
-              }
-            },
-            child: _isRecording == true
+            child: _isRecording
                 ? SizedBox(
                     height: 250,
                     width: 250,
                     child: RippleWave(
-                      child: Icon(
-                        Icons.mic_rounded,
-                      ),
+                      child: Icon(Icons.mic_rounded),
                     ),
                   )
                 : CircleAvatar(
                     radius: 60,
-                    child: Icon(
-                      Icons.mic_rounded,
-                      size: 30,
-                    ),
+                    child: Icon(Icons.mic_rounded, size: 30),
                   ),
           ),
           SizedBox(height: 20),
-          !_isRecording ? Text("Long press to start record ") : SizedBox(),
+          !_isRecording ? Text("Long press to start recording") : SizedBox(),
           SizedBox(height: 20),
           _filePath.isNotEmpty
               ? Row(
@@ -151,9 +195,7 @@ class _RecordScreenState extends State<RecordScreen> {
                           ? Icon(Icons.pause)
                           : Icon(Icons.play_arrow),
                     ),
-                    SizedBox(
-                      width: 20,
-                    ),
+                    SizedBox(width: 20),
                     ElevatedButton(
                       onPressed: _removeRecording,
                       child: Icon(Icons.delete),
