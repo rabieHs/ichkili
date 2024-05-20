@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
@@ -138,6 +139,7 @@ class _RecordScreenState extends State<RecordScreen> {
         });
 
         await FirebaseFirestore.instance.collection('issues').add({
+          'uid': FirebaseAuth.instance.currentUser!.uid,
           'issue_name': _healthIssue,
           'timestamp': DateTime.now(),
         });
@@ -222,10 +224,40 @@ class _RecordScreenState extends State<RecordScreen> {
             ],
           ),
           SizedBox(height: 20),
-          Text(
-            'Health Issue: $_healthIssue',
-            style: TextStyle(fontSize: 18),
-          ),
+          _healthIssue != ''
+              ? FutureBuilder(
+                  future: FirebaseFirestore.instance
+                      .collection("solutions")
+                      .doc(_healthIssue)
+                      .get(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Text("Error"),
+                      );
+                    }
+                    if (snapshot.data == null) {
+                      return Center(
+                        child: CircularProgressIndicator(),
+                      );
+                    } else {
+                      Map<String, dynamic> solutions = snapshot.data!.data()!;
+
+                      List solutionsList = solutions["solution"];
+
+                      return ListView.builder(
+                          itemCount: solutionsList.length,
+                          shrinkWrap: true,
+                          itemBuilder: (context, index) {
+                            return ListTile(
+                              title: Text("Solution ${index + 1}"),
+                              subtitle: Text(solutionsList[index]),
+                              leading: Text((index + 1).toString()),
+                            );
+                          });
+                    }
+                  })
+              : Text(_healthIssue)
         ],
       ),
     );
