@@ -45,10 +45,13 @@ class _RecordScreenState extends State<RecordScreen> {
   Future<void> _startRecording() async {
     try {
       if (await _record.hasPermission()) {
+        //create a temprary file to save the recording
         Directory tempDir = await getTemporaryDirectory();
         _filePath = '${tempDir.path}/recording.wav';
         setState(() {});
         print(_filePath);
+
+        //start recording
         await _record.start(
             path: _filePath,
             RecordConfig(
@@ -131,24 +134,30 @@ class _RecordScreenState extends State<RecordScreen> {
       request.files.add(await http.MultipartFile.fromPath("file", _filePath));
       print("sending request, $request");
       var response = await request.send();
+
       print(response.statusCode);
+      // if the server response was worked successfully!
       if (response.statusCode == 200) {
+        //save the server response in _halthIssue variable
+
         var responseBody = await response.stream.bytesToString();
         var data = jsonDecode(responseBody);
         setState(() {
           _healthIssue = data['prediction'];
         });
 
+        //save the data in the firebase firestore
         await FirebaseFirestore.instance.collection('issues').add({
           'issue_name': _healthIssue,
           'timestamp': DateTime.now(),
         });
       } else {
+        // if the server response has an error
         var responseBody = await response.stream.bytesToString();
         print(
             'Failed to analyze voice: ${response.statusCode} - $responseBody');
         setState(() {
-          _healthIssue = 'Failed to analyze voice';
+          _healthIssue = '';
         });
       }
     } catch (e) {
@@ -230,6 +239,9 @@ class _RecordScreenState extends State<RecordScreen> {
           SizedBox(height: 20),
           _healthIssue != ''
               ? FutureBuilder(
+                  //get the solution from firebase based on the health issue
+                  //example : health issue : bronchite
+                  //collection("solutions").doc("bronchite")
                   future: FirebaseFirestore.instance
                       .collection("solutions")
                       .doc(_healthIssue)
@@ -241,20 +253,22 @@ class _RecordScreenState extends State<RecordScreen> {
                       );
                     }
                     if (snapshot.data == null) {
+                      //if the data is null show loading
                       return Center(
                         child: CircularProgressIndicator(),
                       );
                     } else {
                       Map<String, dynamic> solutions = snapshot.data!.data()!;
-
+                      //get the solution list from firestore
                       List solutionsList = solutions["solution"];
-
+                      //display the solutions list on listView
                       return ListView.builder(
                           itemCount: solutionsList.length,
                           shrinkWrap: true,
                           itemBuilder: (context, index) {
                             return ListTile(
-                              title: Text("Solution ${index + 1}"),
+                              title: Text(
+                                  "Solution ${index + 1} for $_healthIssue"),
                               subtitle: Text(solutionsList[index]),
                               leading: Text((index + 1).toString()),
                             );
