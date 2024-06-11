@@ -47,7 +47,8 @@ class _RecordScreenState extends State<RecordScreen> {
       if (await _record.hasPermission()) {
         Directory tempDir = await getTemporaryDirectory();
         _filePath = '${tempDir.path}/recording.wav';
-
+        setState(() {});
+        print(_filePath);
         await _record.start(
             path: _filePath,
             RecordConfig(
@@ -65,15 +66,17 @@ class _RecordScreenState extends State<RecordScreen> {
     }
   }
 
-  Future<void> _stopRecording() async {
+  Future<String> _stopRecording() async {
     try {
-      await _record.stop();
-
+      final uri = await _record.stop();
+      print("stop record with uri $uri");
       setState(() {
         _isRecording = false;
       });
+      return uri!;
     } catch (e) {
       print('Failed to stop recording: $e');
+      return "";
     }
   }
 
@@ -84,6 +87,7 @@ class _RecordScreenState extends State<RecordScreen> {
     }
 
     try {
+      print("starting playin ...");
       await _audioPlayer.play(DeviceFileSource(_filePath));
     } catch (e) {
       print('Failed to play recording: $e');
@@ -104,7 +108,12 @@ class _RecordScreenState extends State<RecordScreen> {
     });
   }
 
-  Future<void> _analyzeVoice() async {
+  Future<void> analyzeVoice() async {
+    if (_isRecording) {
+      _stopRecording();
+    }
+    print("printing file path: $_filePath");
+
     if (_filePath.isEmpty || !File(_filePath).existsSync()) {
       setState(() {
         _healthIssue = 'No recording found';
@@ -117,24 +126,17 @@ class _RecordScreenState extends State<RecordScreen> {
     });
 
     try {
-      // Stop recording before sending the request
-      await _stopRecording();
-
-      var url = Uri.parse('http://192.168.1.27:4000/predict');
-      var request = http.MultipartRequest('POST', url);
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'audio',
-          _filePath,
-        ),
-      );
-
+      final request = http.MultipartRequest(
+          'POST', Uri.parse("http://10.0.2.2:4000/predict"));
+      request.files.add(await http.MultipartFile.fromPath("file", _filePath));
+      print("sending request, $request");
       var response = await request.send();
+      print(response.statusCode);
       if (response.statusCode == 200) {
         var responseBody = await response.stream.bytesToString();
         var data = jsonDecode(responseBody);
         setState(() {
-          _healthIssue = data['predicted_issue'];
+          _healthIssue = data['prediction'];
         });
 
         await FirebaseFirestore.instance.collection('issues').add({
@@ -165,7 +167,11 @@ class _RecordScreenState extends State<RecordScreen> {
         children: [
           GestureDetector(
             onTap: () {
-              _startRecording();
+              if (_isRecording) {
+                _stopRecording();
+              } else {
+                _startRecording();
+              }
             },
             child: _isRecording
                 ? SizedBox(
@@ -208,8 +214,8 @@ class _RecordScreenState extends State<RecordScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               ElevatedButton(
-                onPressed: () {
-                  _analyzeVoice();
+                onPressed: () async {
+                  await analyzeVoice();
                 },
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -222,10 +228,40 @@ class _RecordScreenState extends State<RecordScreen> {
             ],
           ),
           SizedBox(height: 20),
-          Text(
-            'Health Issue: $_healthIssue',
-            style: TextStyle(fontSize: 18),
-          ),
+          _healthIssue != ''
+              ? FutureBuilder(
+                  future: FirebaseFirestore.instance
+                      .collection("solutions")
+                      .doc(_healthIssue)
+                      .get(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Text("Error"),
+                      );
+                    }
+                    if (snapshot.data == null) {
+                      return Center(
+                        child: CircularProgressIndicator(),
+                      );
+                    } else {
+                      Map<String, dynamic> solutions = snapshot.data!.data()!;
+
+                      List solutionsList = solutions["solution"];
+
+                      return ListView.builder(
+                          itemCount: solutionsList.length,
+                          shrinkWrap: true,
+                          itemBuilder: (context, index) {
+                            return ListTile(
+                              title: Text("Solution ${index + 1}"),
+                              subtitle: Text(solutionsList[index]),
+                              leading: Text((index + 1).toString()),
+                            );
+                          });
+                    }
+                  })
+              : Text(_healthIssue)
         ],
       ),
     );
